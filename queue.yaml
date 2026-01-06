@@ -1,0 +1,15 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: SQS Queue for SSE example
+
+Resources:
+  Queue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sqs-sse-example
+      VisibilityTimeout: 30
+
+Outputs:
+  QueueURL:
+    Value: !Ref Queue
+    Export:
+      Name: SQSSSEQueueURL
