@@ -3,6 +3,7 @@ import { SQSClient, ReceiveMessageCommand, DeleteMessageCommand } from '@aws-sdk
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { EventEmitter } from 'events';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -17,6 +18,34 @@ if (existsSync(htmlPath)) {
   html = readFileSync(htmlPath, 'utf-8');
 }
 
+export const messageEmitter = new EventEmitter();
+
+const pollQueue = async () => {
+  while (true) {
+    try {
+      const { Messages } = await sqs.send(new ReceiveMessageCommand({
+        QueueUrl: QUEUE_URL,
+        MaxNumberOfMessages: 10,
+        WaitTimeSeconds: 20,
+      }));
+
+      if (Messages) {
+        for (const msg of Messages) {
+          messageEmitter.emit('message', msg.Body);
+          await sqs.send(new DeleteMessageCommand({
+            QueueUrl: QUEUE_URL,
+            ReceiptHandle: msg.ReceiptHandle,
+          }));
+        }
+      }
+    } catch (err) {
+      break;
+    }
+  }
+};
+
+pollQueue();
+
 const server = createServer(async (req, res) => {
   if (req.url === '/' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -28,36 +57,16 @@ const server = createServer(async (req, res) => {
       'Connection': 'keep-alive',
     });
 
-    let active = true;
-    const poll = async () => {
-      while (active && !res.destroyed) {
-        try {
-          const { Messages } = await sqs.send(new ReceiveMessageCommand({
-            QueueUrl: QUEUE_URL,
-            MaxNumberOfMessages: 10,
-            WaitTimeSeconds: 20,
-          }));
-
-          if (Messages) {
-            for (const msg of Messages) {
-              res.write(`data: ${msg.Body}\n\n`);
-              await sqs.send(new DeleteMessageCommand({
-                QueueUrl: QUEUE_URL,
-                ReceiptHandle: msg.ReceiptHandle,
-              }));
-            }
-          }
-        } catch (err) {
-          break;
-        }
-      }
+    const onMessage = (body: string) => {
+      res.write(`data: ${body}\n\n`);
     };
 
+    messageEmitter.on('message', onMessage);
+
     req.on('close', () => {
-      active = false;
+      messageEmitter.off('message', onMessage);
       res.end();
     });
-    poll();
   } else if (req.url === '/health' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok' }));

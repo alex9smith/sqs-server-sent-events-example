@@ -15,13 +15,15 @@ const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 describe('server', () => {
   let server: Server;
+  let messageEmitter: any;
 
   beforeAll(async () => {
     vi.stubEnv('QUEUE_URL', 'https://sqs.us-east-1.amazonaws.com/123456789012/test-queue');
     vi.stubEnv('PORT', PORT.toString());
     
-    const { default: serverModule } = await import('./server');
-    server = serverModule;
+    const serverModule = await import('./server');
+    server = serverModule.default;
+    messageEmitter = serverModule.messageEmitter;
     
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('Server failed to start')), 5000);
@@ -64,10 +66,6 @@ describe('server', () => {
   });
 
   it('streams SSE events from SQS messages', async () => {
-    sqsMock.on(ReceiveMessageCommand).resolvesOnce({
-      Messages: [{ Body: 'test message', ReceiptHandle: 'handle1' }]
-    });
-
     await new Promise<void>((resolve, reject) => {
       const req = request(`${BASE_URL}/events`, (res) => {
         expect(res.statusCode).toBe(200);
@@ -88,6 +86,10 @@ describe('server', () => {
         else reject(err);
       });
       req.end();
+
+      setTimeout(() => {
+        messageEmitter.emit('message', 'test message');
+      }, 100);
 
       setTimeout(() => reject(new Error('Test timeout')), 2000);
     });
